@@ -22,7 +22,9 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "math.h"
+#include "stdio.h"
+#include "string.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -87,6 +89,61 @@ uint16_t AD7683_GetValues_SPI(void)
 }
 
 /* USER CODE BEGIN 0 */
+
+#define DATA_SIZE 32000
+uint16_t adcData[DATA_SIZE] = { 0 };
+uint16_t counter = 0;
+
+double calculateRMS()
+{
+  double dataAverage = 0;
+  double squaresSum = 0;
+  char string_value[100];
+  double RMS = 0;
+
+  for(int i = 0; i < DATA_SIZE; i++)
+  {
+    dataAverage += adcData[i];
+  }
+  dataAverage /= DATA_SIZE;
+
+  for(int i = 0; i < DATA_SIZE; i++)
+  {
+    squaresSum += (adcData[i] - dataAverage) * (adcData[i] - dataAverage);
+  }
+
+  RMS = sqrt(squaresSum / DATA_SIZE);
+
+  sprintf(string_value, "ADC_value_RMS,%f\n\r", RMS);
+  HAL_UART_Transmit(&huart2, (uint8_t*)string_value, strlen(string_value), 1000);
+
+  return RMS;
+}
+
+/* USER CODE BEGIN 0 */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  if(htim->Instance == TIM1) //check if the interrupt comes from TIM1
+  {
+    char string_value[100];
+    uint16_t adcValue = AD7683_GetValues_SPI();
+
+    adcData[counter] = adcValue;
+    counter++;
+
+    if(counter >= DATA_SIZE)
+    {
+      counter = 0;
+      calculateRMS();
+    }
+    else
+    {
+      sprintf(string_value, "ADC_value,%d\n\r", adcValue);
+      HAL_UART_Transmit(&huart2, (uint8_t*)string_value, strlen(string_value), 1000);
+    }
+
+  }
+}
 /* USER CODE END 0 */
 
 /**
@@ -128,8 +185,6 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while(1)
   {
-    AD7683_GetValues_SPI();
-    HAL_Delay(50);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
