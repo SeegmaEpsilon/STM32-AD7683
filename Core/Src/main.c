@@ -25,6 +25,8 @@
 #include "math.h"
 #include "stdio.h"
 #include "string.h"
+
+#include "AD7683.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -34,20 +36,16 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define CS_LOW() HAL_GPIO_WritePin(CS_GPIO_Port, CS_Pin, GPIO_PIN_RESET);
-#define CS_HIGH() HAL_GPIO_WritePin(CS_GPIO_Port, CS_Pin, GPIO_PIN_SET);
+#define DATA_SIZE 32000   // may be setted more or less due to MCU RAM
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-/* --- end macros --- */
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
 SPI_HandleTypeDef hspi1;
-
 TIM_HandleTypeDef htim1;
-
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
@@ -65,80 +63,49 @@ static void MX_TIM1_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
-// 1 mhz clk
-uint16_t AD7683_GetValues_SPI(void)
+double calculate_RMS(uint16_t* data)
 {
-  uint32_t result = 0;
-  uint8_t dummy[3];
-  uint8_t byte_array[3] = {0};
-  CS_LOW();
-  HAL_SPI_TransmitReceive(&hspi1, dummy, byte_array, 3, 100);
-  CS_HIGH();
+  double data_average = 0;
+  double sum_squares = 0;
 
-  byte_array[0] &= 0b00000011;
-  byte_array[1] &= 0b11111111;
-  byte_array[2] &= 0b11111100;
-
-  uint32_t HighByte = byte_array[0];
-  uint32_t MiddleByte = byte_array[1];
-  uint32_t LowByte = byte_array[2];
-
-  result = (HighByte << 14) | (MiddleByte << 6) | (LowByte >> 2);
-  return (uint16_t)result;
-}
-
-/* USER CODE BEGIN 0 */
-
-#define DATA_SIZE 32000
-uint16_t adcData[DATA_SIZE] = { 0 };
-uint16_t counter = 0;
-
-double calculateRMS()
-{
-  double dataAverage = 0;
-  double squaresSum = 0;
-  char string_value[100];
-  double RMS = 0;
-
-  for(int i = 0; i < DATA_SIZE; i++)
+  for(uint32_t i = 0; i < DATA_SIZE; i++)
   {
-    dataAverage += adcData[i];
+    data_average += data[i];
   }
-  dataAverage /= DATA_SIZE;
+  data_average /= DATA_SIZE;
 
-  for(int i = 0; i < DATA_SIZE; i++)
+  for(uint32_t i = 0; i < DATA_SIZE; i++)
   {
-    squaresSum += (adcData[i] - dataAverage) * (adcData[i] - dataAverage);
+    sum_squares += (data[i] - data_average) * (data[i] - data_average);
   }
 
-  RMS = sqrt(squaresSum / DATA_SIZE);
-
-  sprintf(string_value, "ADC_value_RMS,%f\n\r", RMS);
-  HAL_UART_Transmit(&huart2, (uint8_t*)string_value, strlen(string_value), 1000);
-
-  return RMS;
+  return sqrt(sum_squares / DATA_SIZE);
 }
 
-/* USER CODE BEGIN 0 */
+// timer frequency - 64 kHz
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
   if(htim->Instance == TIM1) //check if the interrupt comes from TIM1
   {
-    char string_value[100];
-    uint16_t adcValue = AD7683_GetValues_SPI();
+    static uint16_t adcData[DATA_SIZE] = { 0 };
+    static uint16_t counter = 0;
 
-    adcData[counter] = adcValue;
-    counter++;
+    char string_value[100];
+
+    uint16_t adcValue = AD7683_get_value_SPI(&hspi1);
+    adcData[counter++] = adcValue;
 
     if(counter >= DATA_SIZE)
     {
       counter = 0;
-      calculateRMS();
+      double RMS_value = calculate_RMS(adcData);
+
+      sprintf(string_value, "%f\n\r", RMS_value);
+      HAL_UART_Transmit(&huart2, (uint8_t*)string_value, strlen(string_value), 1000);
     }
     else
     {
-      sprintf(string_value, "ADC_value,%d\n\r", adcValue);
+      sprintf(string_value, "%d\n\r", adcValue);
       HAL_UART_Transmit(&huart2, (uint8_t*)string_value, strlen(string_value), 1000);
     }
 
@@ -363,19 +330,11 @@ static void MX_GPIO_Init(void)
   GPIO_InitTypeDef GPIO_InitStruct = {0};
 
   /* GPIO Ports Clock Enable */
-  __HAL_RCC_GPIOC_CLK_ENABLE();
-  __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(CS_GPIO_Port, CS_Pin, GPIO_PIN_SET);
-
-  /*Configure GPIO pin : B1_Pin */
-  GPIO_InitStruct.Pin = B1_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : CS_Pin */
   GPIO_InitStruct.Pin = CS_Pin;
